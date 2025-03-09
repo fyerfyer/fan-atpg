@@ -107,6 +107,10 @@ The FAN algorithm extends the PODEM algorithm with several key strategies:
 - Multiple backtrace to head lines
 - Postponement of line justification to reduce backtracking
 
+## Reference
+
+[1] Fujiwara, H., & Shimono, T. (1983). On the acceleration of test generation algorithms. IEEE Transactions on Computers, (12), 1137-1144.
+
 ## License
 
 This project is licensed under the MIT License.
