@@ -1,6 +1,8 @@
 package test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/fyerfyer/fan-atpg/pkg/circuit"
@@ -255,64 +257,95 @@ func TestReconvergentPathIdentification(t *testing.T) {
 
 // TestFindUniquePathsToOutputs tests finding unique paths to outputs
 func TestFindUniquePathsToOutputs(t *testing.T) {
-	// Create a circuit with unique paths
-	c := createUniquePathTestCircuit()
+	// Create a simple circuit with two clear paths from a gate to outputs
+	c := circuit.NewCircuit("test_paths")
+
+	// Create lines with descriptive names
+	in1 := circuit.NewLine(1, "in1", circuit.PrimaryInput)
+	w1 := circuit.NewLine(2, "w1", circuit.Normal) // Output of g1
+	w2 := circuit.NewLine(3, "w2", circuit.Normal) // Path 1
+	w3 := circuit.NewLine(4, "w3", circuit.Normal) // Path 2
+	out1 := circuit.NewLine(5, "out1", circuit.PrimaryOutput)
+	out2 := circuit.NewLine(6, "out2", circuit.PrimaryOutput)
+
+	c.AddLine(in1)
+	c.AddLine(w1)
+	c.AddLine(w2)
+	c.AddLine(w3)
+	c.AddLine(out1)
+	c.AddLine(out2)
+
+	// Create gates
+	g1 := circuit.NewGate(1, "g1", circuit.BUF)
+	g1.AddInput(in1)
+	g1.SetOutput(w1)
+
+	g2 := circuit.NewGate(2, "g2", circuit.BUF)
+	g2.AddInput(w1) // w1 is input to g2
+	g2.SetOutput(w2)
+
+	g3 := circuit.NewGate(3, "g3", circuit.BUF)
+	g3.AddInput(w1) // w1 is also input to g3 (this is the fanout)
+	g3.SetOutput(w3)
+
+	g4 := circuit.NewGate(4, "g4", circuit.BUF)
+	g4.AddInput(w2)
+	g4.SetOutput(out1)
+
+	g5 := circuit.NewGate(5, "g5", circuit.BUF)
+	g5.AddInput(w3)
+	g5.SetOutput(out2)
+
+	c.AddGate(g1)
+	c.AddGate(g2)
+	c.AddGate(g3)
+	c.AddGate(g4)
+	c.AddGate(g5)
 
 	// Create and analyze topology
 	topo := circuit.NewTopology(c)
 	topo.ComputeLevels()
 
-	// Find specific gates and lines
-	var g1 *circuit.Gate
-	var w3, out *circuit.Line
-
-	for _, gate := range c.Gates {
-		if gate.Name == "g1" {
-			g1 = gate
-			break
-		}
-	}
-
-	for _, line := range c.Lines {
-		switch line.Name {
-		case "w3":
-			w3 = line
-		case "out":
-			out = line
-		}
-	}
-
-	if g1 == nil {
-		t.Fatalf("Could not find gate 'g1'")
-	}
-
 	// Find unique paths from g1 to outputs
 	uniquePaths := topo.FindUniquePathsToOutputs(g1)
 
-	// Check that w3 and out are in the unique paths
-	foundW3 := false
-	foundOut := false
-
-	for _, line := range uniquePaths {
-		if line.ID == w3.ID {
-			foundW3 = true
+	// Debug
+	fmt.Println("Found paths:")
+	for i, path := range uniquePaths {
+		pathStr := []string{}
+		for _, line := range path {
+			pathStr = append(pathStr, line.Name)
 		}
-		if line.ID == out.ID {
-			foundOut = true
-		}
-	}
-
-	if !foundW3 {
-		t.Errorf("Line 'w3' should be in the unique paths")
-	}
-
-	if !foundOut {
-		t.Errorf("Line 'out' should be in the unique paths")
+		fmt.Printf("Path %d: %s\n", i+1, strings.Join(pathStr, " -> "))
 	}
 
 	// Check that we have the expected number of unique paths
 	if len(uniquePaths) != 2 {
-		t.Errorf("Expected 2 lines in unique paths, got %d", len(uniquePaths))
+		t.Errorf("Expected 2 unique paths, got %d", len(uniquePaths))
+	}
+
+	// Check that paths lead to different outputs
+	foundOut1 := false
+	foundOut2 := false
+
+	for _, path := range uniquePaths {
+		if len(path) > 0 {
+			lastLine := path[len(path)-1]
+			if lastLine.Name == "out1" {
+				foundOut1 = true
+			}
+			if lastLine.Name == "out2" {
+				foundOut2 = true
+			}
+		}
+	}
+
+	if !foundOut1 {
+		t.Errorf("Expected a path ending with out1")
+	}
+
+	if !foundOut2 {
+		t.Errorf("Expected a path ending with out2")
 	}
 }
 

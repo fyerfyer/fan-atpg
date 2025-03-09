@@ -37,78 +37,12 @@ func (s *Sensitization) ApplyUniqueSensitization(gate *circuit.Gate) (bool, erro
 		return false, nil
 	}
 
-	s.Logger.Trace("Found %d lines in unique paths that must be sensitized", len(uniquePaths))
+	s.Logger.Trace("Found %d unique paths that must be sensitized", len(uniquePaths))
 
 	// Attempt to sensitize each path
-	changed, err := s.sensitizePathsToOutputs(gate, uniquePaths)
+	changed, err := s.SensitizePathsToOutputs(gate, uniquePaths)
 	if err != nil {
 		return false, err
-	}
-
-	return changed, nil
-}
-
-// Update the sensitizePathsToOutputs function signature
-func (s *Sensitization) sensitizePathsToOutputs(sourceGate *circuit.Gate, paths [][]*circuit.Line) (bool, error) {
-	s.Logger.Trace("Sensitizing paths from gate %s to outputs", sourceGate.Name)
-	changed := false
-
-	// Group lines by the gates they feed into
-	gateInputMap := make(map[*circuit.Gate][]*circuit.Line)
-
-	// Find all gates along the paths that need sensitization
-	for _, path := range paths {
-		for _, line := range path {
-			for _, gate := range line.OutputGates {
-				if _, exists := gateInputMap[gate]; !exists {
-					gateInputMap[gate] = make([]*circuit.Line, 0)
-				}
-				gateInputMap[gate] = append(gateInputMap[gate], line)
-			}
-		}
-	}
-
-	// For each gate on the path, set side inputs to non-controlling values
-	// For each gate on the path, set side inputs to non-controlling values
-	for gate, pathInputs := range gateInputMap {
-		// Skip if this gate doesn't need sensitization (no fault on path)
-		needsSensitization := false
-		for _, input := range pathInputs {
-			if input.IsFaulty() {
-				needsSensitization = true
-				break
-			}
-		}
-
-		if !needsSensitization {
-			continue
-		}
-
-		// Get the non-controlling value for this gate type
-		nonControlVal := gate.GetNonControllingValue()
-		if nonControlVal == circuit.X {
-			s.Logger.Trace("Gate %s has no non-controlling value, skipping", gate.Name)
-			continue
-		}
-
-		// Set all non-path inputs to non-controlling values
-		for _, input := range gate.Inputs {
-			// Skip if this input is part of the path or already has a value
-			isPathInput := false
-			for _, pathInput := range pathInputs {
-				if input.ID == pathInput.ID {
-					isPathInput = true
-					break
-				}
-			}
-
-			if !isPathInput && !input.IsAssigned() {
-				s.Logger.Algorithm("Setting line %s to %v for unique sensitization",
-					input.Name, nonControlVal)
-				input.SetValue(nonControlVal)
-				changed = true
-			}
-		}
 	}
 
 	// If we've made changes, perform implication and update frontiers
@@ -120,6 +54,56 @@ func (s *Sensitization) sensitizePathsToOutputs(sourceGate *circuit.Gate, paths 
 
 		s.Frontier.UpdateDFrontier()
 		s.Frontier.UpdateJFrontier()
+	}
+
+	return changed, nil
+}
+
+// Update the SensitizePathsToOutputs function signature
+func (s *Sensitization) SensitizePathsToOutputs(sourceGate *circuit.Gate, paths [][]*circuit.Line) (bool, error) {
+	s.Logger.Trace("Sensitizing paths from gate %s to outputs", sourceGate.Name)
+	changed := false
+
+	// First, collect all lines that are part of any path
+	pathLines := make(map[*circuit.Line]bool)
+	for _, path := range paths {
+		for _, line := range path {
+			pathLines[line] = true
+		}
+	}
+
+	// For each path
+	for _, path := range paths {
+		for i := 0; i < len(path); i++ {
+			line := path[i]
+
+			// Find gates this line feeds into
+			for _, gate := range line.OutputGates {
+				// For all gates except the source gate of the fault
+				if gate.ID == sourceGate.ID {
+					continue
+				}
+
+				// Get non-controlling value for this gate
+				nonControlVal := gate.GetNonControllingValue()
+				if nonControlVal == circuit.X {
+					continue // Skip gates with no clear non-controlling value
+				}
+
+				// Set all side inputs (non-path inputs) to non-controlling values
+				for _, input := range gate.Inputs {
+					// Skip if this input is part of any path or already assigned
+					if pathLines[input] || input.IsAssigned() {
+						continue
+					}
+
+					s.Logger.Algorithm("Setting side input %s to non-controlling value %v for gate %s",
+						input.Name, nonControlVal, gate.Name)
+					input.SetValue(nonControlVal)
+					changed = true
+				}
+			}
+		}
 	}
 
 	return changed, nil
@@ -150,7 +134,7 @@ func (s *Sensitization) TrySensitizePath(gate *circuit.Gate) (bool, error) {
 	}
 
 	// Try to sensitize the paths
-	return s.sensitizePathsToOutputs(gate, allPaths)
+	return s.SensitizePathsToOutputs(gate, allPaths)
 }
 
 // FindCriticalInputs identifies inputs that are critical for fault propagation

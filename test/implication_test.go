@@ -671,16 +671,6 @@ func createEnhancedSensitizationTestCircuit() *circuit.Circuit {
 	return c
 }
 
-// Helper function to find a line by name
-func findLine(c *circuit.Circuit, name string) *circuit.Line {
-	for _, line := range c.Lines {
-		if line.Name == name {
-			return line
-		}
-	}
-	return nil
-}
-
 // Helper function to create a test circuit for implication testing
 func createImplicationTestCircuit() *circuit.Circuit {
 	c := circuit.NewCircuit("implication_test_circuit")

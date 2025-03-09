@@ -196,78 +196,72 @@ func (i *Implication) ImplyBackward() (bool, error) {
 
 // HasConflict checks for logical conflicts in the current circuit state
 func (i *Implication) HasConflict() bool {
-	// detect conflict in the circuit
-	if i.Circuit.FaultSite != nil && i.Circuit.FaultSite.Value != circuit.X {
-		goodValue := i.Circuit.FaultSite.GetGoodValue()
-
-		// if the good value is the same as the fault type, it's a conflict
-		if goodValue == i.Circuit.FaultType {
-			i.Logger.Implication("Conflict: fault site %s has good value equal to fault type %v",
-				i.Circuit.FaultSite.Name, i.Circuit.FaultType)
-			return true
-		}
-	}
-
-	// check if any gate has inconsistent output
+	// Check for conflicts in gate outputs (simulated vs. assigned)
 	for _, gate := range i.Circuit.Gates {
-		if gate.IsInputsAssigned() && gate.Output.IsAssigned() {
-			expectedOutput := gate.Evaluate()
-			if expectedOutput != gate.Output.Value {
-				i.Logger.Implication("Conflict: gate %s has inconsistent output %v, expected %v",
-					gate.Name, gate.Output.Value, expectedOutput)
+		// Skip gates with unassigned outputs
+		if !gate.Output.IsAssigned() {
+			continue
+		}
+
+		// Skip gates with unassigned inputs (we can't simulate them)
+		allInputsAssigned := true
+		for _, input := range gate.Inputs {
+			if !input.IsAssigned() {
+				allInputsAssigned = false
+				break
+			}
+		}
+
+		if allInputsAssigned {
+			// Simulate gate output
+			simulated := gate.Evaluate()
+
+			// Skip D/D' comparison to X since it's not a conflict
+			if gate.Output.Value == circuit.X || simulated == circuit.X {
+				continue
+			}
+
+			// Check for inconsistency between simulated and assigned
+			if gate.Output.Value != simulated {
+				i.Logger.Implication("Conflict detected: gate %s output is %v but should be %v",
+					gate.Name, gate.Output.Value, simulated)
 				return true
 			}
 		}
-
-		switch gate.Type {
-		case circuit.AND:
-			if gate.Output.Value == circuit.One {
-				for _, input := range gate.Inputs {
-					if input.Value == circuit.Zero {
-						i.Logger.Implication("Conflict: AND gate %s has output 1 but input %s is 0",
-							gate.Name, input.Name)
-						return true
-					}
-				}
-			}
-		case circuit.OR:
-			if gate.Output.Value == circuit.Zero {
-				for _, input := range gate.Inputs {
-					if input.Value == circuit.One {
-						i.Logger.Implication("Conflict: OR gate %s has output 0 but input %s is 1",
-							gate.Name, input.Name)
-						return true
-					}
-				}
-			}
-		}
 	}
 
-	// check if D-frontier has disappeared but fault effect hasn't reached outputs
-	if len(i.Frontier.DFrontier) == 0 {
-		// check if any output has a fault value
-		faultyOutputExists := false
-		for _, output := range i.Circuit.Outputs {
-			if output.IsFaulty() {
-				faultyOutputExists = true
-				break
-			}
-		}
+	// For fault sites, handle special cases
+	if i.Circuit.FaultSite != nil && i.Circuit.FaultSite.IsAssigned() {
+		faultLine := i.Circuit.FaultSite
+		faultType := i.Circuit.FaultType
 
-		// check if any internal line has a fault value
-		faultySignalExists := false
-		for _, line := range i.Circuit.Lines {
-			if line.IsFaulty() {
-				faultySignalExists = true
-				break
-			}
-		}
-
-		// if there are faulty signals but no output has a fault value,
-		// the fault effect should be blocked
-		if faultySignalExists && !faultyOutputExists {
-			i.Logger.Implication("Conflict: D-frontier has disappeared without fault effect reaching outputs")
+		// Special case from first implementation:
+		// If the good value equals the fault type, we have a conflict
+		// This is because we're trying to set the line to its fault value
+		// which means the fault won't be activated
+		if faultLine.Value == faultType {
+			i.Logger.Implication("Fault site conflict: trying to set fault site %s to its fault value %v",
+				faultLine.Name, faultType)
 			return true
+		}
+
+		// From second implementation: Check for values incompatible with fault type
+		if faultType == circuit.Zero {
+			// For s-a-0, only allowed values are 0 and D'
+			// But we've already flagged 0 as a conflict above, so just check it's not 1 or D
+			if faultLine.Value == circuit.One || faultLine.Value == circuit.D {
+				i.Logger.Implication("Fault site conflict: s-a-0 fault site has invalid value %v",
+					faultLine.Value)
+				return true
+			}
+		} else if faultType == circuit.One {
+			// For s-a-1, only allowed values are 1 and D
+			// But we've already flagged 1 as a conflict above, so just check it's not 0 or D'
+			if faultLine.Value == circuit.Zero || faultLine.Value == circuit.Dnot {
+				i.Logger.Implication("Fault site conflict: s-a-1 fault site has invalid value %v",
+					faultLine.Value)
+				return true
+			}
 		}
 	}
 

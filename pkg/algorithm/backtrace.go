@@ -144,19 +144,50 @@ func (b *Backtrace) GetNextObjective() (*circuit.Line, circuit.LogicValue, bool)
 
 		// If fault site is a head line or PI, assign it directly
 		if b.Circuit.FaultSite.IsHeadLine || b.Circuit.FaultSite.Type == circuit.PrimaryInput {
+			b.Logger.Algorithm("Fault site is head line or PI, assigning directly")
 			return b.Circuit.FaultSite, targetValue, true
 		}
 
+		// Important fix: Check if there's already a decision made for an input that would control the fault site
+		// If we've already decided on all inputs to the gate driving the fault site, we shouldn't try again
+		if b.Circuit.FaultSite.InputGate != nil {
+			allInputsAssigned := true
+			for _, input := range b.Circuit.FaultSite.InputGate.Inputs {
+				if !input.IsAssigned() {
+					allInputsAssigned = false
+					break
+				}
+			}
+
+			if allInputsAssigned {
+				b.Logger.Algorithm("All inputs to fault site gate are already assigned, skipping fault activation")
+				// Skip to next objective (D-frontier or J-frontier)
+				goto checkDFrontier
+			}
+		}
+
 		// Otherwise, backtrace to control it
-		//return b.DirectBacktrace(b.Circuit.FaultSite, targetValue)
-		//return
 		line, value := b.DirectBacktrace(b.Circuit.FaultSite, targetValue)
-		return line, value, false
+		if line == nil {
+			b.Logger.Algorithm("Direct backtrace failed to find an objective")
+			return nil, circuit.X, false
+		}
+
+		// Check if the line we're about to decide on is already assigned
+		if line.IsAssigned() {
+			b.Logger.Algorithm("Line %s is already assigned to %v, skipping", line.Name, line.Value)
+			// Skip to next objective (D-frontier or J-frontier)
+			goto checkDFrontier
+		}
+
+		b.Logger.Algorithm("Direct backtrace found objective: %s = %v", line.Name, value)
+		return line, value, true
 	}
 
+checkDFrontier:
 	// Check if there's a D-frontier to propagate
 	if len(b.Frontier.DFrontier) > 0 {
-		b.Logger.Algorithm("D-frontier exists with %d gates, trying to propagate fault",
+		b.Logger.Algorithm("D-frontier exists with %d gates, finding objective to propagate",
 			len(b.Frontier.DFrontier))
 		line, value := b.BacktraceFromDFrontier()
 		if line != nil {
@@ -166,7 +197,7 @@ func (b *Backtrace) GetNextObjective() (*circuit.Line, circuit.LogicValue, bool)
 
 	// Check if there's a J-frontier to justify
 	if len(b.Frontier.JFrontier) > 0 {
-		b.Logger.Algorithm("J-frontier exists with %d gates, trying to justify values",
+		b.Logger.Algorithm("J-frontier exists with %d gates, finding objective to justify",
 			len(b.Frontier.JFrontier))
 		line, value := b.BacktraceFromJFrontier()
 		if line != nil {
@@ -176,7 +207,7 @@ func (b *Backtrace) GetNextObjective() (*circuit.Line, circuit.LogicValue, bool)
 
 	// Check if test is already complete
 	if b.Circuit.CheckTestStatus() {
-		b.Logger.Algorithm("Test is complete, no further objectives needed")
+		b.Logger.Algorithm("Test already complete, no more objectives needed")
 		return nil, circuit.X, true
 	}
 

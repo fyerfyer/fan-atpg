@@ -212,27 +212,24 @@ func (t *Topology) GetHeadLines() []*Line {
 	return t.HeadLinesList
 }
 
-// FindUniquePathsToOutputs finds paths that all signals from a gate must traverse
-// to reach primary outputs (used for unique sensitization)
 // FindUniquePathsToOutputs finds paths from a gate to primary outputs that must be sensitized
 func (t *Topology) FindUniquePathsToOutputs(gate *Gate) [][]*Line {
 	paths := [][]*Line{}
-	visited := make(map[*Line]bool)
 
 	// Start with the output of the gate
 	outputLine := gate.Output
 
-	// Find all paths from this line to primary outputs
-	t.findPathsToPO(outputLine, []*Line{outputLine}, visited, &paths)
+	// Add it to the initial path
+	initialPath := []*Line{outputLine}
 
-	// Filter to only include unique/required paths
+	// Find all paths from this line to primary outputs
+	t.findPathsToPO(outputLine, initialPath, &paths)
+
 	return paths
 }
 
 // Helper function to recursively find paths to primary outputs
-func (t *Topology) findPathsToPO(line *Line, currentPath []*Line,
-	visited map[*Line]bool, allPaths *[][]*Line) {
-
+func (t *Topology) findPathsToPO(line *Line, currentPath []*Line, allPaths *[][]*Line) {
 	// If we've reached a primary output, add the path
 	if line.Type == PrimaryOutput {
 		pathCopy := make([]*Line, len(currentPath))
@@ -241,24 +238,27 @@ func (t *Topology) findPathsToPO(line *Line, currentPath []*Line,
 		return
 	}
 
-	// Mark as visited to avoid cycles
-	visited[line] = true
-
-	// If this line fans out to gates, explore each one
-	if gate := line.OutputGates; len(gate) > 0 {
-		for _, g := range gate {
-			// For each gate this line feeds into, follow its output
-			nextLine := g.Output
-			if !visited[nextLine] {
-				// Add this line to the current path and continue
-				newPath := append(currentPath, nextLine)
-				t.findPathsToPO(nextLine, newPath, visited, allPaths)
+	// For each gate this line feeds into, explore a new path
+	for _, gate := range line.OutputGates {
+		// Skip already visited lines to prevent cycles
+		alreadyInPath := false
+		for _, pathLine := range currentPath {
+			if gate.Output == pathLine {
+				alreadyInPath = true
+				break
 			}
 		}
-	}
 
-	// Unmark as visited when backtracking
-	visited[line] = false
+		if !alreadyInPath {
+			// Create a new path with the output added
+			newPath := make([]*Line, len(currentPath))
+			copy(newPath, currentPath)
+			newPath = append(newPath, gate.Output)
+
+			// Explore this path
+			t.findPathsToPO(gate.Output, newPath, allPaths)
+		}
+	}
 }
 
 // findAllPathsToOutputs finds all paths from a line to primary outputs

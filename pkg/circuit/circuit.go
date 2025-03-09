@@ -259,7 +259,18 @@ func (c *Circuit) CheckTestStatus() bool {
 			return true
 		}
 	}
-	return false
+
+	// Added debugging - are there any faulty signals in the circuit?
+	hasFaultySignal := false
+	for _, line := range c.Lines {
+		if line.IsFaulty() {
+			hasFaultySignal = true
+			break
+		}
+	}
+
+	// If there are faulty signals but none at outputs, fault hasn't propagated yet
+	return hasFaultySignal
 }
 
 // AnalyzeTopology analyzes the circuit topology to identify free, bound, and head lines

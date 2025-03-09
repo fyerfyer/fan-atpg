@@ -110,13 +110,20 @@ func (f *Frontier) GetDFrontierGate() *circuit.Gate {
 		return nil
 	}
 
-	// Simple strategy: choose the gate with the lowest number of inputs
-	// This tends to be easier to sensitize
-	sort.Slice(f.DFrontier, func(i, j int) bool {
-		return len(f.DFrontier[i].Inputs) < len(f.DFrontier[j].Inputs)
-	})
+	// Find gate with the fewest inputs
+	bestGate := f.DFrontier[0]
+	fewestInputs := len(bestGate.Inputs)
 
-	return f.DFrontier[0]
+	for _, gate := range f.DFrontier {
+		if len(gate.Inputs) < fewestInputs {
+			bestGate = gate
+			fewestInputs = len(gate.Inputs)
+		}
+	}
+
+	f.Logger.Trace("Selected gate %s from D-frontier with %d inputs",
+		bestGate.Name, len(bestGate.Inputs))
+	return bestGate
 }
 
 // GetJFrontierGate selects the most appropriate gate from the J-frontier

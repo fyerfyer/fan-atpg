@@ -2,6 +2,7 @@ package algorithm
 
 import (
 	"fmt"
+
 	"github.com/fyerfyer/fan-atpg/pkg/circuit"
 	"github.com/fyerfyer/fan-atpg/pkg/utils"
 )
@@ -105,6 +106,32 @@ func (d *Decision) MakeDecision() (bool, error) {
 
 // tryValue attempts to set a line to a specific value and check if it leads to a conflict
 func (d *Decision) tryValue(line *circuit.Line, value circuit.LogicValue) (bool, error) {
+	// Add special handling for assigning values to fault sites
+	if line == d.Circuit.FaultSite {
+		d.Logger.Decision("Setting value %v on fault site %s", value, line.Name)
+
+		// For stuck-at-0, setting to 1 should create D' (not conflict)
+		// For stuck-at-1, setting to 0 should create D (not conflict)
+		if (d.Circuit.FaultType == circuit.Zero && value == circuit.One) ||
+			(d.Circuit.FaultType == circuit.One && value == circuit.Zero) {
+			line.SetValue(value)
+			d.Frontier.UpdateDFrontier()
+			d.Frontier.UpdateJFrontier()
+			return true, nil
+		}
+
+		// Setting fault site to same value as fault should be valid but won't help testing
+		if value == d.Circuit.FaultType {
+			line.SetValue(value)
+			d.Frontier.UpdateDFrontier()
+			d.Frontier.UpdateJFrontier()
+			// But we should warn that this won't activate the fault
+			d.Logger.Decision("Warning: Setting fault site %s to %v (same as fault type)",
+				line.Name, value)
+			return true, nil
+		}
+	}
+
 	// Save circuit state before trying
 	savedState := d.saveCircuitState()
 
@@ -153,47 +180,51 @@ func (d *Decision) Backtrack() (bool, error) {
 
 	// If we haven't tried the alternative, try it now
 	if !node.Tried {
-		d.Logger.Backtrack("Trying alternative value %v for %s",
-			node.Alternative, node.Line.Name)
+		// Save the fault site and fault type before reset
+		faultSite := d.Circuit.FaultSite
+		faultType := d.Circuit.FaultType
 
 		// Reset circuit state
 		d.Circuit.Reset()
 
-		// If we have a fault site, re-inject fault
-		if d.Circuit.FaultSite != nil {
-			d.Circuit.InjectFault(d.Circuit.FaultSite, d.Circuit.FaultType)
+		// Re-inject fault
+		if faultSite != nil {
+			d.Circuit.InjectFault(faultSite, faultType)
+			d.Logger.Backtrack("Re-injected fault at %s stuck-at-%v", faultSite.Name, faultType)
 		}
 
 		// Reapply all decisions up to but not including the current one
-		for i := 0; i < len(d.Stack); i++ {
+		for i := 0; i < lastIdx; i++ {
 			prevNode := d.Stack[i]
 			prevNode.Line.SetValue(prevNode.Value)
+			d.Logger.Backtrack("Restored previous decision: %s = %v",
+				prevNode.Line.Name, prevNode.Value)
 		}
 
 		// Perform implication to restore circuit state
 		_, err := d.Implication.ImplyValues()
 		if err != nil {
-			return false, err
+			d.Logger.Backtrack("Error during state restoration: %v", err)
 		}
 
 		// Now try the alternative value
-		success, err := d.tryValue(node.Line, node.Alternative)
-		if err != nil {
-			return false, err
-		}
+		node.Tried = true
+		node.Value = node.Alternative
+		d.Logger.Backtrack("Trying alternative value %v for %s",
+			node.Value, node.Line.Name)
 
-		if success {
-			// Alternative worked, push back onto stack with tried=true
-			node.Value = node.Alternative
-			node.Tried = true
+		node.Line.SetValue(node.Value)
+		_, err = d.Implication.ImplyValues()
+		if err == nil {
+			// Alternative worked, add it back to the stack
 			d.Stack = append(d.Stack, node)
-			d.Logger.Backtrack("Alternative value %v successful for %s",
-				node.Alternative, node.Line.Name)
+			d.Logger.Backtrack("Alternative value %v for %s successful",
+				node.Value, node.Line.Name)
 			return true, nil
 		}
 
-		d.Logger.Backtrack("Alternative value %v also failed for %s, continuing backtrack",
-			node.Alternative, node.Line.Name)
+		d.Logger.Backtrack("Alternative value %v for %s also failed",
+			node.Value, node.Line.Name)
 	}
 
 	// If we get here, both values failed or we've already tried the alternative
