@@ -48,8 +48,8 @@ func (s *Sensitization) ApplyUniqueSensitization(gate *circuit.Gate) (bool, erro
 	return changed, nil
 }
 
-// sensitizePathsToOutputs sets the necessary values to sensitize paths to outputs
-func (s *Sensitization) sensitizePathsToOutputs(sourceGate *circuit.Gate, pathLines []*circuit.Line) (bool, error) {
+// Update the sensitizePathsToOutputs function signature
+func (s *Sensitization) sensitizePathsToOutputs(sourceGate *circuit.Gate, paths [][]*circuit.Line) (bool, error) {
 	s.Logger.Trace("Sensitizing paths from gate %s to outputs", sourceGate.Name)
 	changed := false
 
@@ -57,15 +57,18 @@ func (s *Sensitization) sensitizePathsToOutputs(sourceGate *circuit.Gate, pathLi
 	gateInputMap := make(map[*circuit.Gate][]*circuit.Line)
 
 	// Find all gates along the paths that need sensitization
-	for _, line := range pathLines {
-		for _, gate := range line.OutputGates {
-			if _, exists := gateInputMap[gate]; !exists {
-				gateInputMap[gate] = make([]*circuit.Line, 0)
+	for _, path := range paths {
+		for _, line := range path {
+			for _, gate := range line.OutputGates {
+				if _, exists := gateInputMap[gate]; !exists {
+					gateInputMap[gate] = make([]*circuit.Line, 0)
+				}
+				gateInputMap[gate] = append(gateInputMap[gate], line)
 			}
-			gateInputMap[gate] = append(gateInputMap[gate], line)
 		}
 	}
 
+	// For each gate on the path, set side inputs to non-controlling values
 	// For each gate on the path, set side inputs to non-controlling values
 	for gate, pathInputs := range gateInputMap {
 		// Skip if this gate doesn't need sensitization (no fault on path)
@@ -138,8 +141,7 @@ func (s *Sensitization) IdentifySensitizableGates() []*circuit.Gate {
 	return result
 }
 
-// TrySensitizePath attempts to sensitize a path from a gate to primary outputs
-// Returns true if successful, false otherwise
+// Update the TrySensitizePath function
 func (s *Sensitization) TrySensitizePath(gate *circuit.Gate) (bool, error) {
 	// Find all paths from this gate to primary outputs
 	allPaths := s.Topology.FindUniquePathsToOutputs(gate)
@@ -211,35 +213,37 @@ func (s *Sensitization) IsPathSensitized(line *circuit.Line) bool {
 	return false
 }
 
-// GetSensitizationObjectives returns objectives for sensitizing paths from D-frontier
+// Fix the GetSensitizationObjectives function
 func (s *Sensitization) GetSensitizationObjectives() []InitialObjective {
 	objectives := make([]InitialObjective, 0)
 
 	// For each gate in D-frontier
 	for _, gate := range s.Frontier.DFrontier {
 		// Find paths that must be sensitized
-		paths := s.Topology.FindUniquePathsToOutputs(gate)
+		pathsList := s.Topology.FindUniquePathsToOutputs(gate)
 
 		// For each path, identify gates that need side inputs set
-		for _, line := range paths {
-			if line.InputGate == nil {
-				continue
-			}
-
-			// For each gate that this line feeds into
-			for _, nextGate := range line.OutputGates {
-				nonControlVal := nextGate.GetNonControllingValue()
-				if nonControlVal == circuit.X {
+		for _, path := range pathsList {
+			for _, line := range path {
+				if line.InputGate == nil {
 					continue
 				}
 
-				// Set all other inputs to non-controlling values
-				for _, input := range nextGate.Inputs {
-					if input.ID != line.ID && !input.IsAssigned() {
-						objectives = append(objectives, InitialObjective{
-							Line:  input,
-							Value: nonControlVal,
-						})
+				// For each gate that this line feeds into
+				for _, nextGate := range line.OutputGates {
+					nonControlVal := nextGate.GetNonControllingValue()
+					if nonControlVal == circuit.X {
+						continue
+					}
+
+					// Set all other inputs to non-controlling values
+					for _, input := range nextGate.Inputs {
+						if input.ID != line.ID && !input.IsAssigned() {
+							objectives = append(objectives, InitialObjective{
+								Line:  input,
+								Value: nonControlVal,
+							})
+						}
 					}
 				}
 			}

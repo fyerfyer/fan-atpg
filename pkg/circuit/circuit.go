@@ -65,6 +65,8 @@ func (c *Circuit) Reset() {
 	for _, line := range c.Lines {
 		line.Reset()
 	}
+	c.FaultSite = nil
+	c.FaultType = X
 	c.DFrontier = make([]*Gate, 0)
 	c.JFrontier = make([]*Gate, 0)
 }
@@ -74,19 +76,16 @@ func (c *Circuit) InjectFault(faultSite *Line, faultType LogicValue) {
 	c.FaultSite = faultSite
 	c.FaultType = faultType
 
-	// If the fault site already has a value, adjust it to D or D'
-	if faultSite.Value != X {
-		// If good value is same as fault type, no need to adjust
-		if faultSite.Value == faultType {
-			return
-		}
+	// Update the line's fault information
+	faultSite.IsFaultSite = true
+	faultSite.FaultType = faultType
 
-		// Otherwise, convert to D or D'
-		if faultType == One {
-			faultSite.Value = D // Good is 0, faulty is 1
-		} else {
-			faultSite.Value = Dnot // Good is 1, faulty is 0
-		}
+	// If the fault site already has a value, adjust it
+	if faultSite.Value != X {
+		// Re-apply the current value which will convert to D/D' if needed
+		currentValue := faultSite.Value
+		faultSite.Value = X // Reset to avoid double counting assignments
+		faultSite.SetValue(currentValue)
 	}
 }
 

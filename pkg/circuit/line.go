@@ -52,6 +52,10 @@ type Line struct {
 	InputGate   *Gate      // Gate driving this line (nil for primary inputs)
 	OutputGates []*Gate    // Gates to which this line is an input
 
+	// Fault information
+	IsFaultSite bool       // True if this line is a fault site
+	FaultType   LogicValue // The fault type (Zero or One) if this is a fault site
+
 	// Topological properties - will be set during preprocessing
 	IsFree     bool // True if not reachable from any fanout point
 	IsBound    bool // True if reachable from a fanout point
@@ -77,12 +81,31 @@ func NewLine(id int, name string, lineType LineType) *Line {
 
 // SetValue sets the logic value of the line
 func (l *Line) SetValue(value LogicValue) {
-	l.Value = value
+	// Check if this is a fault site
+	if l.IsFaultSite {
+		if value != X && value != l.FaultType {
+			// We're setting a value opposite to the fault type
+			// This creates D or D' values
+			if l.FaultType == Zero {
+				l.Value = Dnot // Good value is 1, faulty value is 0
+			} else {
+				l.Value = D // Good value is 0, faulty value is 1
+			}
+		} else {
+			// Value is X or matches fault type
+			l.Value = value
+		}
+	} else {
+		// Normal line, just set the value
+		l.Value = value
+	}
 	l.AssignmentCount++
 }
 
 // Reset resets the line value to X
 func (l *Line) Reset() {
+	l.IsFaultSite = false
+	l.FaultType = X
 	l.Value = X
 }
 

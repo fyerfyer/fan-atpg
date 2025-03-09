@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -26,7 +27,7 @@ func ParseBenchFile(filename string) (*circuit.Circuit, error) {
 	defer file.Close()
 
 	// Extract circuit name from filename
-	circuitName := strings.TrimSuffix(strings.Split(filename, "/")[len(strings.Split(filename, "/"))-1], ".bench")
+	circuitName := strings.TrimSuffix(filepath.Base(filename), ".bench")
 	c := circuit.NewCircuit(circuitName)
 
 	// Maps to store line names to their IDs for easy lookup

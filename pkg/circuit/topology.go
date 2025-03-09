@@ -114,17 +114,15 @@ func (t *Topology) IdentifyFreeAndBoundRegions() {
 
 // markReachableLines marks all lines reachable from a starting line as bound
 func (t *Topology) markReachableLines(startLine *Line) {
-	// Skip if already processed
-	if startLine.IsBound {
-		return
-	}
-
-	startLine.IsBound = true
-	startLine.IsFree = false
-
-	// Mark all lines reachable from this line
+	// Skip if already bound
 	for _, gate := range startLine.OutputGates {
-		t.markReachableLines(gate.Output)
+		if !gate.Output.IsBound {
+			gate.Output.IsBound = true
+			gate.Output.IsFree = false
+
+			// mark recursively
+			t.markReachableLines(gate.Output)
+		}
 	}
 }
 
@@ -133,8 +131,15 @@ func (t *Topology) markReachableLines(startLine *Line) {
 func (t *Topology) IdentifyHeadLines() {
 	t.HeadLinesList = make([]*Line, 0)
 
+	// 创建fanout points的快速查找表
+	fanoutMap := make(map[*Line]bool)
+	for _, fp := range t.FanoutPoints {
+		fanoutMap[fp] = true
+	}
+
 	for _, line := range t.Circuit.Lines {
-		if !line.IsFree {
+		// 跳过不是free的线路和fanout points
+		if !line.IsFree || fanoutMap[line] {
 			continue
 		}
 
@@ -156,33 +161,44 @@ func (t *Topology) IdentifyHeadLines() {
 
 // IdentifyReconvergentPaths identifies reconvergent paths in the circuit
 func (t *Topology) IdentifyReconvergentPaths() {
-	// For each fanout point, trace forward to find reconvergence points
+	t.ReconvPoints = make(map[*Line]bool)
+
+	// 对每个fanout point，跟踪前向路径以找到重合点
 	for _, fanout := range t.FanoutPoints {
-		// Track paths from this fanout using BFS
-		visited := make(map[*Line]int) // Line -> count of paths reaching it
+		// 使用BFS跟踪来自此fanout的路径
+		visited := make(map[*Line]int) // Line -> 到达该线路的路径数
 		queue := make([]*Line, 0)
 
-		// Start with all immediate outputs of the fanout
+		// 从fanout的所有直接输出开始
 		for _, gate := range fanout.OutputGates {
 			queue = append(queue, gate.Output)
-			visited[gate.Output] = 1
 		}
 
-		// BFS to find reconvergent points
+		// 为直接输出初始化访问计数
+		for _, line := range queue {
+			visited[line] = 1
+		}
+
+		// BFS查找重合点
 		for len(queue) > 0 {
 			current := queue[0]
 			queue = queue[1:]
 
-			// Process each gate this line feeds into
+			// 处理此线路输入到的每个gate
 			for _, gate := range current.OutputGates {
 				output := gate.Output
 
+				// 检查是否是PrimaryOutput，如果是且路径数>1则标记为重合点
+				if output.Type == PrimaryOutput && visited[current] > 1 {
+					t.ReconvPoints[output] = true
+				}
+
 				if count, exists := visited[output]; exists {
-					// This line has been reached before, so it's a reconvergence point
+					// 这条线路之前已被访问，所以它是重合点
 					visited[output] = count + 1
 					t.ReconvPoints[output] = true
 				} else {
-					// First time visiting this line
+					// 首次访问这条线路
 					visited[output] = 1
 					queue = append(queue, output)
 				}
@@ -198,47 +214,51 @@ func (t *Topology) GetHeadLines() []*Line {
 
 // FindUniquePathsToOutputs finds paths that all signals from a gate must traverse
 // to reach primary outputs (used for unique sensitization)
-func (t *Topology) FindUniquePathsToOutputs(gate *Gate) []*Line {
-	uniquePaths := make([]*Line, 0)
+// FindUniquePathsToOutputs finds paths from a gate to primary outputs that must be sensitized
+func (t *Topology) FindUniquePathsToOutputs(gate *Gate) [][]*Line {
+	paths := [][]*Line{}
+	visited := make(map[*Line]bool)
 
-	// Find all paths from gate output to primary outputs
-	paths := t.findAllPathsToOutputs(gate.Output)
+	// Start with the output of the gate
+	outputLine := gate.Output
 
-	// Find lines that appear in all paths
-	if len(paths) > 0 {
-		// Start with all lines from the first path
-		commonLines := make(map[*Line]bool)
-		for _, line := range paths[0] {
-			commonLines[line] = true
-		}
+	// Find all paths from this line to primary outputs
+	t.findPathsToPO(outputLine, []*Line{outputLine}, visited, &paths)
 
-		// Keep only lines that appear in all paths
-		for i := 1; i < len(paths); i++ {
-			currentPathLines := make(map[*Line]bool)
-			for _, line := range paths[i] {
-				currentPathLines[line] = true
-			}
+	// Filter to only include unique/required paths
+	return paths
+}
 
-			// Remove lines not in current path
-			for line := range commonLines {
-				if !currentPathLines[line] {
-					delete(commonLines, line)
-				}
-			}
-		}
+// Helper function to recursively find paths to primary outputs
+func (t *Topology) findPathsToPO(line *Line, currentPath []*Line,
+	visited map[*Line]bool, allPaths *[][]*Line) {
 
-		// Convert to slice
-		for line := range commonLines {
-			uniquePaths = append(uniquePaths, line)
-		}
-
-		// Sort by level
-		sort.Slice(uniquePaths, func(i, j int) bool {
-			return t.LevelMap[uniquePaths[i]] < t.LevelMap[uniquePaths[j]]
-		})
+	// If we've reached a primary output, add the path
+	if line.Type == PrimaryOutput {
+		pathCopy := make([]*Line, len(currentPath))
+		copy(pathCopy, currentPath)
+		*allPaths = append(*allPaths, pathCopy)
+		return
 	}
 
-	return uniquePaths
+	// Mark as visited to avoid cycles
+	visited[line] = true
+
+	// If this line fans out to gates, explore each one
+	if gate := line.OutputGates; len(gate) > 0 {
+		for _, g := range gate {
+			// For each gate this line feeds into, follow its output
+			nextLine := g.Output
+			if !visited[nextLine] {
+				// Add this line to the current path and continue
+				newPath := append(currentPath, nextLine)
+				t.findPathsToPO(nextLine, newPath, visited, allPaths)
+			}
+		}
+	}
+
+	// Unmark as visited when backtracking
+	visited[line] = false
 }
 
 // findAllPathsToOutputs finds all paths from a line to primary outputs
@@ -279,7 +299,7 @@ func (t *Topology) GetControlLineFor(targetLine *Line) *Line {
 
 	for _, headLine := range t.HeadLinesList {
 		// Check if a path exists from this head line to target line
-		path := t.findPathBetween(headLine, targetLine)
+		path := t.FindPathBetween(headLine, targetLine)
 		if path != nil {
 			distance := len(path)
 			if bestDistance == -1 || distance < bestDistance {
@@ -292,8 +312,8 @@ func (t *Topology) GetControlLineFor(targetLine *Line) *Line {
 	return bestHeadLine
 }
 
-// findPathBetween finds a path between two lines if one exists
-func (t *Topology) findPathBetween(start, end *Line) []*Line {
+// FindPathBetween finds a path between two lines if one exists
+func (t *Topology) FindPathBetween(start, end *Line) []*Line {
 	// Simple BFS to find path
 	visited := make(map[*Line]bool)
 	queue := [][]*Line{{start}}
